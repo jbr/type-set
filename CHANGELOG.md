@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2](https://github.com/jbr/type-set/compare/v0.3.1...v0.3.2) - 2024-08-02
+
+### Other
+- *(deps)* update rust crate env_logger to v0.11.5
+- *(deps)* bump test-harness from 0.2.0 to 0.3.0
+
 ## [0.3.1](https://github.com/jbr/type-set/compare/v0.3.0...v0.3.1) - 2024-05-20
 
 ### Added
