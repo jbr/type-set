@@ -26,8 +26,9 @@ Implementation is based on
 */
 use std::{
     any::{type_name, Any, TypeId},
-    collections::BTreeMap,
+    collections::HashMap,
     fmt::{self, Debug, Formatter},
+    hash::{BuildHasherDefault, Hasher},
 };
 
 /// Types for interacting with a mutable view into a `TypeSet` for a given type
@@ -65,6 +66,39 @@ impl Value {
 
 type Key = TypeId;
 
+/// A [`Hasher`] that uses a [`TypeId`]'s value directly as the hash.
+///
+/// `TypeId` is already a high-quality hash, so feeding it through a general-purpose hasher would be
+/// wasted work and would slow down every lookup. This hasher simply captures the value `TypeId`
+/// emits. `TypeId` currently hashes itself with a single `write_u64`, but `write_u128` and the
+/// `write` byte-slice path are implemented as well so that a future change to `TypeId`'s
+/// representation cannot silently produce a constant hash.
+#[derive(Default)]
+struct IdHasher(u64);
+
+impl Hasher for IdHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.0 = self.0.rotate_left(8) ^ u64::from(byte);
+        }
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.0 = value;
+    }
+
+    #[allow(clippy::cast_possible_truncation)]
+    fn write_u128(&mut self, value: u128) {
+        self.0 = (value as u64) ^ ((value >> 64) as u64);
+    }
+}
+
+type Map = HashMap<Key, Value, BuildHasherDefault<IdHasher>>;
+
 macro_rules! unwrap {
     ($x:expr) => {
         match $x {
@@ -82,7 +116,7 @@ use unwrap;
 /// Note that there is currently no way to iterate over the collection, as there may be types stored
 /// that cannot be named by the calling code
 #[derive(Default)]
-pub struct TypeSet(BTreeMap<Key, Value>);
+pub struct TypeSet(Map);
 
 fn field_with(f: impl Fn(&mut Formatter) -> fmt::Result) -> impl Debug {
     struct DebugWith<F>(F);
@@ -119,7 +153,73 @@ impl TypeSet {
     /// Create an empty `TypeSet`.
     #[must_use]
     pub const fn new() -> Self {
-        Self(BTreeMap::new())
+        Self(HashMap::with_hasher(BuildHasherDefault::new()))
+    }
+
+    /// Create an empty `TypeSet` with space for at least `capacity` distinct types.
+    ///
+    /// Preallocating avoids the incremental reallocations that occur as types are inserted, which is
+    /// worthwhile when the number of types is known ahead of time or when reusing a `TypeSet` across
+    /// many fill/[`clear`](TypeSet::clear) cycles.
+    ///
+    /// ## Example
+    ///
+    /// ```rust
+    /// let mut set = type_set::TypeSet::with_capacity(2);
+    /// set.insert("hello");
+    /// set.insert(1usize);
+    /// assert_eq!(set.get::<&'static str>(), Some(&"hello"));
+    /// ```
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self(HashMap::with_capacity_and_hasher(
+            capacity,
+            BuildHasherDefault::new(),
+        ))
+    }
+
+    /// Remove all types from this `TypeSet`, retaining the allocated capacity for reuse.
+    ///
+    /// This is the cheap way to reuse a `TypeSet` allocation: clearing and refilling avoids
+    /// reallocating the backing storage that constructing a fresh `TypeSet` would require.
+    ///
+    /// ## Example
+    ///
+    /// ```rust
+    /// let mut set = type_set::TypeSet::new().with("hello").with(1usize);
+    /// set.clear();
+    /// assert!(set.is_empty());
+    /// assert_eq!(set.get::<&'static str>(), None);
+    /// ```
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    /// Reserve capacity for at least `additional` more distinct types.
+    ///
+    /// ## Example
+    ///
+    /// ```rust
+    /// let mut set = type_set::TypeSet::new();
+    /// set.reserve(4);
+    /// set.insert("hello");
+    /// ```
+    pub fn reserve(&mut self, additional: usize) {
+        self.0.reserve(additional);
+    }
+
+    /// Shrink the capacity of this `TypeSet` as much as possible.
+    ///
+    /// ## Example
+    ///
+    /// ```rust
+    /// let mut set = type_set::TypeSet::with_capacity(16);
+    /// set.insert("hello");
+    /// set.shrink_to_fit();
+    /// assert_eq!(set.get::<&'static str>(), Some(&"hello"));
+    /// ```
+    pub fn shrink_to_fit(&mut self) {
+        self.0.shrink_to_fit();
     }
 
     /// Returns true if the `TypeSet` contains zero types.
@@ -193,7 +293,7 @@ impl TypeSet {
     #[must_use]
     pub fn get<T: Send + Sync + 'static>(&self) -> Option<&T> {
         #[cfg(feature = "log")]
-        log::trace!("getting {}", type_name::<T>(),);
+        log::trace!("getting {}", type_name::<T>());
         self.0
             .get(&key::<T>())
             .map(|value| unwrap!(value.downcast_ref()))

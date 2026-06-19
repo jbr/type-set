@@ -1,7 +1,7 @@
 use crate::{unwrap, Key, Value};
 use std::{
     any::{type_name, Any, TypeId},
-    collections::btree_map,
+    collections::hash_map,
     fmt::{self, Debug, Formatter},
     marker::PhantomData,
     ops::{Deref, DerefMut},
@@ -42,7 +42,7 @@ pub enum Entry<'a, T> {
     Occupied(OccupiedEntry<'a, T>),
 }
 
-impl<'a, T: Debug + Any + Send + Sync + 'static> Debug for Entry<'a, T> {
+impl<T: Debug + Any + Send + Sync + 'static> Debug for Entry<'_, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::Vacant(vacant_entry) => f.debug_tuple("Vacant").field(vacant_entry).finish(),
@@ -57,22 +57,22 @@ impl<'a, T: Debug + Any + Send + Sync + 'static> Debug for Entry<'a, T> {
 ///
 /// It is part of the [`Entry`] enum.
 pub struct VacantEntry<'a, T>(
-    pub(super) btree_map::VacantEntry<'a, Key, Value>,
+    pub(super) hash_map::VacantEntry<'a, Key, Value>,
     PhantomData<T>,
 );
 
-impl<'a, T: Debug + Any + Send + Sync + 'static> Debug for VacantEntry<'a, T> {
+impl<T: Debug + Any + Send + Sync + 'static> Debug for VacantEntry<'_, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "VacantEntry<{}>", type_name::<T>())
     }
 }
 /// A view into the location a T is stored
 pub struct OccupiedEntry<'a, T>(
-    pub(super) btree_map::OccupiedEntry<'a, Key, Value>,
+    pub(super) hash_map::OccupiedEntry<'a, Key, Value>,
     PhantomData<T>,
 );
 
-impl<'a, T: Debug + Any + Send + Sync + 'static> Debug for OccupiedEntry<'a, T> {
+impl<T: Debug + Any + Send + Sync + 'static> Debug for OccupiedEntry<'_, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_tuple(&format!("OccupiedEntry<{}>", type_name::<T>()))
             .field(unwrap!(self.0.get().downcast_ref::<T>()))
@@ -239,10 +239,10 @@ impl<'a, T: Send + Sync + 'static> Entry<'a, T> {
         }
     }
 
-    pub(super) fn new(entry: btree_map::Entry<'a, TypeId, Value>) -> Self {
+    pub(super) fn new(entry: hash_map::Entry<'a, TypeId, Value>) -> Self {
         match entry {
-            btree_map::Entry::Vacant(vacant) => Self::Vacant(VacantEntry(vacant, PhantomData)),
-            btree_map::Entry::Occupied(occupied) => {
+            hash_map::Entry::Vacant(vacant) => Self::Vacant(VacantEntry(vacant, PhantomData)),
+            hash_map::Entry::Occupied(occupied) => {
                 Self::Occupied(OccupiedEntry(occupied, PhantomData))
             }
         }
@@ -313,7 +313,7 @@ impl<'a, T: Send + Sync + 'static> OccupiedEntry<'a, T> {
     }
 }
 
-impl<'a, T: Send + Sync + 'static> Deref for OccupiedEntry<'a, T> {
+impl<T: Send + Sync + 'static> Deref for OccupiedEntry<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -321,7 +321,7 @@ impl<'a, T: Send + Sync + 'static> Deref for OccupiedEntry<'a, T> {
     }
 }
 
-impl<'a, T: Send + Sync + 'static> DerefMut for OccupiedEntry<'a, T> {
+impl<T: Send + Sync + 'static> DerefMut for OccupiedEntry<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.get_mut()
     }
